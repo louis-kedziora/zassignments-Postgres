@@ -1,0 +1,68 @@
+#1
+WITH series(id) AS
+    (SELECT id FROM productions WHERE attr='TV-series'),
+  rated(episodeof, season, id, rank, votes, epnumber) AS
+    (SELECT episodeof, season, ratings.id, rank, votes, epnumber
+      FROM ratings LEFT JOIN episodes ON ratings.id = episodes.id
+      WHERE episodeof IN (SELECT episodeof FROM ratings LEFT JOIN episodes ON ratings.id = episodes.id
+      GROUP BY episodeof HAVING max(season) > 3))
+  SELECT episodeof, avg(rank) as arank, avg(votes) as avotes, count(epnumber) as cepisodes, max(season) as cseasons
+    FROM rated LEFT JOIN series ON rated.episodeof = series.id
+    GROUP BY episodeof HAVING avg(rank) > 8.5 AND avg(votes) >= 1000 ORDER BY arank DESC;
+
+
+#2
+WITH goodM(title, year, rank, votes) AS
+  (SELECT title, year, rank, votes FROM ratings NATURAL JOIN productions
+    WHERE attr is null AND votes >= 50000)
+  SELECT title, year, rank, votes FROM goodM
+    WHERE rank IN (SELECT max(rank) as rank FROM goodM);
+
+
+
+#3
+WITH goodM(id, rank) AS
+  (SELECT ratings.id, rank FROM ratings NATURAL JOIN productions
+    WHERE attr is null AND votes >= 50000 AND rank >= 8)
+  SELECT pid, count(id) as num_movies, avg(rank) as avg_rank
+    FROM goodM NATURAL JOIN roles GROUP BY pid
+    HAVING count(id) >= 10 ORDER BY avg(rank);
+
+
+#4
+WITH goodM(id) AS
+  (SELECT id FROM ratings NATURAL JOIN productions
+    WHERE rank >= 8 AND votes >= 50000 AND attr IS NULL),
+  roles_goodM(pid, id, billing, character) AS
+    (SELECT pid, roles.id, billing, character FROM goodM NATURAL JOIN roles),
+  max_pid(pid, c_id) AS
+  (SELECT pid, count(id) AS c_id FROM roles_goodM GROUP BY pid)
+  SELECT pid, id, billing, character FROM roles_goodM WHERE pid IN
+    (SELECT pid FROM max_pid NATURAL JOIN roles_goodM WHERE c_id IN
+      (SELECT max(c_id) FROM max_pid)) ORDER BY pid;
+
+
+#5
+WITH movies(id, rank) AS
+    (SELECT id, rank FROM productions NATURAL JOIN ratings WHERE attr IS NULL AND votes >= 40000),
+  g_movies(pid, id, rank) AS
+    (SELECT pid, id, rank FROM movies NATURAL JOIN directors WHERE rank > 8.4),
+  b_movies(pid, id, rank) AS
+    (SELECT pid, id, rank FROM movies NATURAL JOIN directors WHERE rank <= 8.4),
+  d_pool(pid, id, rank) AS
+    (SELECT pid, id, rank FROM movies NATURAL JOIN directors WHERE pid IN
+      (SELECT pid FROM movies NATURAL JOIN directors GROUP BY pid HAVING count(id) >= 8)
+    AND pid IN
+      (SELECT pid FROM g_movies NATURAL JOIN directors GROUP BY pid HAVING count(id) >= 1)),
+  count_g_movies(pid, goodones) AS
+    (SELECT pid, count(id) as goodones FROM g_movies GROUP BY pid),
+  count_b_movies(pid ,rest) AS
+    (SELECT pid, count(id) as rest FROM b_movies GROUP BY pid),
+  avg_g(pid, avggoodones) AS
+    (SELECT pid, avg(rank) as avggoodones FROM g_movies GROUP BY pid),
+  avg_b(pid, avgrest) AS
+    (SELECT pid, avg(rank) as avgrest FROM b_movies GROUP BY pid)
+  SELECT DISTINCT d_pool.pid, to_char((cast(goodones as decimal) / (goodones + rest))*100, '999.9%') AS prop, (goodones + rest) AS total,
+    goodones, to_char(avggoodones, '9.9') avggoodones, rest, to_char(avgrest, '9.9') avgrest, to_char(avggoodones - avgrest, '9.9') diff
+    FROM d_pool NATURAL JOIN count_g_movies NATURAL JOIN count_b_movies NATURAL JOIN avg_g
+      NATURAL JOIN avg_b;
